@@ -1,14 +1,18 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::f64::consts;
 use std::fmt;
 use std::ops::{Add, Mul};
 use std::rc::Rc;
+
+use num_traits::Float;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Oper {
     Add,
     Mul,
     Leaf,
+    Tanh,
 }
 
 struct ValueData {
@@ -69,12 +73,25 @@ impl Value {
                     let mut a = a_rc.0.borrow_mut();
                     let mut b = b_rc.0.borrow_mut();
                     a.grad = match a.grad {
-                        None => Some(b_data),
+                        None => Some(b_data * data.grad.unwrap()),
                         Some(x) => Some(x + b_data),
                     };
                     b.grad = match b.grad {
-                        None => Some(a_data),
-                        Some(x) => Some(x + a_data),
+                        None => Some(a_data * data.grad.unwrap()),
+                        Some(x) => Some((x + a_data) * data.grad.unwrap()),
+                    };
+                }
+                Oper::Tanh => {
+                    // data is already tanh(x) since
+                    // we are now in the output and
+                    // calculating derivatives of
+                    // inputs so just ^2
+                    let tanh: f64 = data.data.powi(2);
+                    let d = 1.0 - tanh;
+                    let mut child = data._prev[0].0.borrow_mut();
+                    child.grad = match child.grad {
+                        None => Some(d * data.grad.unwrap()),
+                        Some(x) => Some((d * data.grad.unwrap()) + x),
                     };
                 }
                 Oper::Leaf => {}
@@ -101,12 +118,21 @@ impl Value {
             topo.push(self.clone());
         }
     }
+    pub fn tanh(&self) -> Self {
+        let data = self.data();
+        Value(Rc::new(RefCell::new(ValueData {
+            data: data.tanh(),
+            grad: None,
+            _prev: vec![self.clone()],
+            _op: Oper::Tanh,
+        })))
+    }
 }
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.grad().is_none() {
-            write!(f, "Value(data={:.4}, grad=(Not set))", self.data(),)
+            write!(f, "Value(data={:.4}, grad=(Not set))", self.data())
         } else {
             write!(
                 f,
@@ -223,5 +249,12 @@ impl Mul<Value> for f64 {
     type Output = Value;
     fn mul(self, other: Value) -> Value {
         Value::new(self) * other
+    }
+}
+
+impl Mul<&Value> for &f64 {
+    type Output = Value;
+    fn mul(self, other: &Value) -> Value {
+        return Value::new(other.data() + self);
     }
 }
