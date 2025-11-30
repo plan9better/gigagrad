@@ -87,6 +87,9 @@ impl Value {
                     // calculating derivatives of
                     // inputs so just ^2
                     let tanh: f64 = data.data.powi(2);
+                    if tanh == 1 {
+                        eprintln!("WARN[gigagrad]: While calculating gradient of {:?} the output value is 1 therefore the gradient will be 0.")
+                    }
                     let d = 1.0 - tanh;
                     let mut child = data._prev[0].0.borrow_mut();
                     child.grad = match child.grad {
@@ -132,11 +135,16 @@ impl Value {
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.grad().is_none() {
-            write!(f, "Value(data={:.4}, grad=(Not set))", self.data())
+            write!(
+                f,
+                "Value(data={:.4}, grad=(Not set), Op={:?})",
+                self.data(),
+                self._op
+            )
         } else {
             write!(
                 f,
-                "Value(data={:.4}, grad={:.4})",
+                "Value(data={:.4}, grad={:.4}), Op={:?}",
                 self.data(),
                 self.grad().unwrap()
             )
