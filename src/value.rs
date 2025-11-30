@@ -1,13 +1,15 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt;
-use std::ops::{Add, Mul};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Oper {
     Add,
+    Sub,
     Mul,
+    Pow(f64),
     Leaf,
     Tanh,
 }
@@ -32,13 +34,26 @@ impl Value {
         })))
     }
 
+    pub fn pow(&self, exponent: f64) -> Value {
+        Value(Rc::new(RefCell::new(ValueData {
+            data: self.data().powf(exponent),
+            grad: None,
+            _prev: vec![self.clone()],
+            _op: Oper::Pow(exponent),
+        })))
+    }
+
+    pub fn update(&self, learning_rate: f64) -> () {
+        let mut param = self.0.borrow_mut();
+        param.data += -learning_rate * param.grad.unwrap()
+    }
+
     pub fn backprop(&self) -> () {
         let mut topo = vec![];
         let mut visited = HashSet::new();
         self.build_topo(&mut visited, &mut topo);
 
         {
-            // borrow and return
             let mut root = self.0.borrow_mut();
             if root.grad.is_none() {
                 root.grad = Some(1.0);
@@ -47,52 +62,58 @@ impl Value {
 
         for node in topo.iter().rev() {
             let data = node.0.borrow_mut();
+            let grad = data.grad.unwrap();
+
             match data._op {
                 Oper::Add => {
                     for v in data._prev.iter() {
                         let mut child = v.0.borrow_mut();
-                        child.grad = match child.grad {
-                            None => data.grad,
-                            Some(x) => Some(x + data.grad.unwrap()),
-                        }
+                        child.grad = Some(child.grad.unwrap_or(0.0) + grad);
+                    }
+                }
+                Oper::Sub => {
+                    let a_rc = &data._prev[0];
+                    let b_rc = &data._prev[1];
+
+                    {
+                        let mut a = a_rc.0.borrow_mut();
+                        a.grad = Some(a.grad.unwrap_or(0.0) + grad);
+                    }
+                    {
+                        let mut b = b_rc.0.borrow_mut();
+                        b.grad = Some(b.grad.unwrap_or(0.0) - grad);
                     }
                 }
                 Oper::Mul => {
                     let a_rc = &data._prev[0];
                     let b_rc = &data._prev[1];
-
-                    // .data() borrows quickly and returns
-                    // copy so we just do it before the long
-                    // borrow (mutable) since a value can
-                    // only be borrowed once
                     let a_data = a_rc.data();
                     let b_data = b_rc.data();
-                    let mut a = a_rc.0.borrow_mut();
-                    let mut b = b_rc.0.borrow_mut();
-                    a.grad = match a.grad {
-                        None => Some(b_data * data.grad.unwrap()),
-                        Some(x) => Some(x + b_data),
-                    };
-                    b.grad = match b.grad {
-                        None => Some(a_data * data.grad.unwrap()),
-                        Some(x) => Some((x + a_data) * data.grad.unwrap()),
-                    };
+
+                    {
+                        let mut a = a_rc.0.borrow_mut();
+                        a.grad = Some(a.grad.unwrap_or(0.0) + b_data * grad);
+                    }
+                    {
+                        let mut b = b_rc.0.borrow_mut();
+                        b.grad = Some(b.grad.unwrap_or(0.0) + a_data * grad);
+                    }
+                }
+                Oper::Pow(exp) => {
+                    let child = &data._prev[0];
+                    let base_data = child.data();
+
+                    let derivative = exp * base_data.powf(exp - 1.0);
+
+                    let mut c = child.0.borrow_mut();
+                    c.grad = Some(c.grad.unwrap_or(0.0) + derivative * grad);
                 }
                 Oper::Tanh => {
-                    // data is already tanh(x) since
-                    // we are now in the output and
-                    // calculating derivatives of
-                    // inputs so just ^2
-                    let tanh: f64 = data.data.powi(2);
-                    if tanh == 1.0 {
-                        eprintln!("WARN[gigagrad]: While calculating gradient of {:?} the output value is 1 therefore the gradient will be 0.", node)
-                    }
-                    let d = 1.0 - tanh;
+                    let tanh = data.data; // tanh(x)
+                    let d = 1.0 - tanh.powi(2); // derivative is 1 - tanh^2(x)
+
                     let mut child = data._prev[0].0.borrow_mut();
-                    child.grad = match child.grad {
-                        None => Some(d * data.grad.unwrap()),
-                        Some(x) => Some((d * data.grad.unwrap()) + x),
-                    };
+                    child.grad = Some(child.grad.unwrap_or(0.0) + d * grad);
                 }
                 Oper::Leaf => {}
             };
@@ -122,6 +143,7 @@ impl Value {
             topo.push(self.clone());
         }
     }
+
     pub fn tanh(&self) -> Self {
         let data = self.data();
         Value(Rc::new(RefCell::new(ValueData {
@@ -135,33 +157,34 @@ impl Value {
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.grad().is_none() {
+        if let Some(grad) = self.grad() {
             write!(
                 f,
-                "Value(data={:.4}, grad=(Not set), Op={:?})",
+                "Value(data={:.4}, grad={:.4}, Op={:?})",
                 self.data(),
+                grad,
                 self.op()
             )
         } else {
             write!(
                 f,
-                "Value(data={:.4}, grad={:.4}), Op={:?}",
+                "Value(data={:.4}, grad=None, Op={:?})",
                 self.data(),
-                self.grad().unwrap(),
-                self.op(),
+                self.op()
             )
         }
     }
 }
 
-//  &Value + &Value
-// unrelated scopes because the Rc will keep
-// heap data alive for us so we don't have to
-// worry about wether some value will outlive
-// what it depends on.
+// Add
+impl Add for Value {
+    type Output = Value;
+    fn add(self, other: Value) -> Value {
+        &self + &other
+    }
+}
 impl<'a, 'b> Add<&'b Value> for &'a Value {
     type Output = Value;
-
     fn add(self, other: &'b Value) -> Value {
         Value(Rc::new(RefCell::new(ValueData {
             data: self.data() + other.data(),
@@ -171,35 +194,28 @@ impl<'a, 'b> Add<&'b Value> for &'a Value {
         })))
     }
 }
-
-// Value + Value
-impl Add for Value {
+impl Add<f64> for Value {
+    type Output = Value;
+    fn add(self, other: f64) -> Value {
+        self + Value::new(other)
+    }
+}
+impl Add<Value> for f64 {
     type Output = Value;
     fn add(self, other: Value) -> Value {
-        &self + &other
+        Value::new(self) + other
     }
 }
 
-// &Value + Value
-impl Add<Value> for &Value {
+// Mul
+impl Mul for Value {
     type Output = Value;
-    fn add(self, other: Value) -> Value {
-        self + &other
+    fn mul(self, other: Value) -> Value {
+        &self * &other
     }
 }
-
-// Value + &Value
-impl Add<&Value> for Value {
-    type Output = Value;
-    fn add(self, other: &Value) -> Value {
-        &self + other
-    }
-}
-
-// &Value * &Value
 impl<'a, 'b> Mul<&'b Value> for &'a Value {
     type Output = Value;
-
     fn mul(self, other: &'b Value) -> Value {
         Value(Rc::new(RefCell::new(ValueData {
             data: self.data() * other.data(),
@@ -209,62 +225,80 @@ impl<'a, 'b> Mul<&'b Value> for &'a Value {
         })))
     }
 }
-
-// Value * Value
-impl Mul for Value {
-    type Output = Value;
-    fn mul(self, other: Value) -> Value {
-        &self * &other
-    }
-}
-
-// &Value * Value
-impl Mul<Value> for &Value {
-    type Output = Value;
-    fn mul(self, other: Value) -> Value {
-        self * &other
-    }
-}
-
-// Value * &Value
-impl Mul<&Value> for Value {
-    type Output = Value;
-    fn mul(self, other: &Value) -> Value {
-        &self * other
-    }
-}
-
-impl Add<f64> for Value {
-    type Output = Value;
-    fn add(self, other: f64) -> Value {
-        self + Value::new(other)
-    }
-}
-
-impl Add<Value> for f64 {
-    type Output = Value;
-    fn add(self, other: Value) -> Value {
-        Value::new(self) + other
-    }
-}
-
 impl Mul<f64> for Value {
     type Output = Value;
     fn mul(self, other: f64) -> Value {
         self * Value::new(other)
     }
 }
-
 impl Mul<Value> for f64 {
     type Output = Value;
     fn mul(self, other: Value) -> Value {
         Value::new(self) * other
     }
 }
-
 impl Mul<&Value> for &f64 {
     type Output = Value;
     fn mul(self, other: &Value) -> Value {
-        return Value::new(other.data() + self);
+        let tmp = Value::new(*self);
+        return &tmp * other;
+    }
+}
+
+// Sub
+impl Sub for Value {
+    type Output = Value;
+    fn sub(self, other: Value) -> Value {
+        &self - &other
+    }
+}
+impl<'a, 'b> Sub<&'b Value> for &'a Value {
+    type Output = Value;
+    fn sub(self, other: &'b Value) -> Value {
+        Value(Rc::new(RefCell::new(ValueData {
+            data: self.data() - other.data(),
+            grad: None,
+            _prev: vec![self.clone(), other.clone()],
+            _op: Oper::Sub,
+        })))
+    }
+}
+impl Sub<f64> for Value {
+    type Output = Value;
+    fn sub(self, other: f64) -> Value {
+        self - Value::new(other)
+    }
+}
+impl Sub<Value> for f64 {
+    type Output = Value;
+    fn sub(self, other: Value) -> Value {
+        Value::new(self) - other
+    }
+}
+
+// Div
+impl Div for Value {
+    type Output = Value;
+    fn div(self, other: Value) -> Value {
+        self * other.pow(-1.0)
+    }
+}
+impl Div<f64> for Value {
+    type Output = Value;
+    fn div(self, other: f64) -> Value {
+        self * Value::new(other).pow(-1.0)
+    }
+}
+impl Div<Value> for f64 {
+    type Output = Value;
+    fn div(self, other: Value) -> Value {
+        Value::new(self) * other.pow(-1.0)
+    }
+}
+
+impl Neg for Value {
+    type Output = Value;
+    fn neg(self) -> Value {
+        self * -1.0
     }
 }

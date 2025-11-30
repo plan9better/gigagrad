@@ -1,8 +1,8 @@
-use crate::Value;
+use crate::value::Value;
 use rand::Rng;
-use std::iter::repeat_with;
+use std::fmt;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Neuron {
     #[allow(dead_code)]
     pub input_size: usize,
@@ -19,10 +19,11 @@ impl Neuron {
         }
         Neuron {
             input_size: size,
-            bias: Value::new(rng.random_range(-1.0..=1.0)),
+            bias: Value::new(rng.random_range(-1.0..1.0)),
             weights: vec,
         }
     }
+
     pub fn call(&self, inputs: &Vec<Value>) -> Value {
         let mut sum = self.bias.clone();
         for (i, w) in inputs.iter().zip(&self.weights) {
@@ -30,8 +31,28 @@ impl Neuron {
         }
         sum.tanh()
     }
+
+    pub fn parameters(&self) -> Vec<Value> {
+        let mut p = self.weights.clone();
+        p.push(self.bias.clone());
+        p
+    }
 }
-#[derive(Debug, Clone)]
+
+impl fmt::Debug for Neuron {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Neuron(w=[")?;
+        for (i, w) in self.weights.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{:.4}", w.data())?;
+        }
+        write!(f, "], b={:.4})", self.bias.data())
+    }
+}
+
+#[derive(Clone)]
 pub struct Layer {
     pub neurons: Vec<Neuron>,
     pub input_size: usize,
@@ -50,6 +71,7 @@ impl Layer {
             output_size: output_size,
         }
     }
+
     pub fn forward(&self, inputs: Vec<Value>) -> Vec<Value> {
         let mut outputs = Vec::with_capacity(self.output_size);
         for neuron in self.neurons.iter() {
@@ -57,9 +79,27 @@ impl Layer {
         }
         return outputs;
     }
+
+    pub fn parameters(&self) -> Vec<Value> {
+        self.neurons.iter().flat_map(|n| n.parameters()).collect()
+    }
 }
 
-#[derive(Debug, Clone)]
+impl fmt::Debug for Layer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "Layer(in={}, out={}):",
+            self.input_size, self.output_size
+        )?;
+        for (i, n) in self.neurons.iter().enumerate() {
+            writeln!(f, "    {}: {:?}", i, n)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
 pub struct MLP {
     pub layers: Vec<Layer>,
     pub input_size: usize,
@@ -67,10 +107,7 @@ pub struct MLP {
 
 impl MLP {
     pub fn new(inputs_size: usize, layer_sizes: Vec<usize>) -> Self {
-        // +1 for input the user is expected to specify the output
-        // size themself
-        let mut layers = Vec::with_capacity(layer_sizes.len() + 1);
-
+        let mut layers = Vec::with_capacity(layer_sizes.len());
         let mut prev_size = inputs_size;
         for size in layer_sizes {
             layers.push(Layer::new(prev_size, size));
@@ -81,12 +118,31 @@ impl MLP {
             input_size: inputs_size,
         }
     }
-    pub fn forward(&self, inputs: Vec<Value>) -> Vec<Value> {
+
+    pub fn forward(&self, inputs: &Vec<Value>) -> Vec<Value> {
         let mut previous_out = inputs.clone();
         for layer in self.layers.iter() {
             previous_out = layer.forward(previous_out);
         }
-
         previous_out
+    }
+
+    pub fn parameters(&self) -> Vec<Value> {
+        self.layers.iter().flat_map(|l| l.parameters()).collect()
+    }
+    pub fn descend(&self, learning_rate: f64) -> () {
+        for p in self.parameters().iter() {
+            p.update(learning_rate);
+        }
+    }
+}
+
+impl fmt::Debug for MLP {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "MLP ({} Layers):", self.layers.len())?;
+        for (i, layer) in self.layers.iter().enumerate() {
+            write!(f, "  L{}: {:?}", i, layer)?;
+        }
+        Ok(())
     }
 }
