@@ -14,12 +14,15 @@ impl Neuron {
     pub fn new(size: usize) -> Self {
         let mut rng = rand::rng();
         let mut vec = Vec::with_capacity(size);
+        let normalized_range = 1.0 / (size as f64).sqrt();
         for _ in 0..size {
-            vec.push(Value::new(rng.random_range(-1.0..1.0)));
+            vec.push(Value::new(
+                rng.random_range(-normalized_range..normalized_range),
+            ));
         }
         Neuron {
             input_size: size,
-            bias: Value::new(rng.random_range(-1.0..1.0)),
+            bias: Value::new(rng.random_range(-normalized_range..normalized_range)),
             weights: vec,
         }
     }
@@ -102,6 +105,8 @@ impl fmt::Debug for Layer {
 #[derive(Clone)]
 pub struct MLP {
     pub layers: Vec<Layer>,
+
+    #[allow(dead_code)]
     pub input_size: usize,
 }
 

@@ -17,7 +17,7 @@
           # derivation
         };
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [cargo rust-analyzer clippy rustfmt];
+          packages = with pkgs; [cargo rust-analyzer clippy rustfmt uv];
         };
       }
     );

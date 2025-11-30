@@ -4,5 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+csv = "1.4.0"
 num-traits = "0.2.19"
 rand = "0.9.2"
+
+[profile.release]
+opt-level = 3       # Default for release, aggressively optimize size/speed
+lto = "fat"         # Link Time Optimization (very slow compile, faster binary)
+codegen-units = 1   # Disable parallel compilation to allow global analysis
+panic = "abort"     # Remove stack unwinding checks (smaller/faster binary)

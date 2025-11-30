@@ -43,9 +43,12 @@ impl Value {
         })))
     }
 
-    pub fn update(&self, learning_rate: f64) -> () {
+    pub fn update(&self, learning_rate: f64) -> Option<f64> {
         let mut param = self.0.borrow_mut();
-        param.data += -learning_rate * param.grad.unwrap()
+        param.data += -learning_rate * param.grad.expect("Param doesn't have a gradient? i guess");
+        let prev_grad = param.grad;
+        param.grad = None;
+        prev_grad
     }
 
     pub fn backprop(&self) -> () {
