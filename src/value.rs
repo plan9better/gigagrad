@@ -1,124 +1,150 @@
-use num_traits::{FromPrimitive, ToPrimitive};
-use std::hash::Hash;
-use std::ops::Add;
+use std::cell::RefCell;
+use std::fmt;
+use std::ops::{Add, Mul};
+use std::rc::Rc;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum Oper {
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Oper {
     Add,
-    Sub,
-    Div,
     Mul,
-    Exp,
-    Pow,
     Leaf,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct Value<T> {
-    pub value: T,
-    pub grad: Option<T>,
-    pub parent: Oper,
-    // this should be an unordered set of arbitrary length e.g. a HashMap
-    // but floats don't implement Eq (NaN != NaN) and Hash so a list for now
-    pub children: Vec<Value<T>>,
+struct ValueData {
+    data: f64,
+    grad: f64,
+    _prev: Vec<Value>,
+    _op: Oper,
 }
 
-impl<T> Value<T>
-where
-    T: ToPrimitive + FromPrimitive + Add<Output = T> + Copy,
-{
-    pub fn new(value: T) -> Self {
-        Value {
-            value,
-            grad: None,
-            parent: Oper::Leaf,
-            children: Vec::new(),
-        }
+#[derive(Clone)]
+pub struct Value(Rc<RefCell<ValueData>>);
+
+impl Value {
+    pub fn new(data: f64) -> Value {
+        Value(Rc::new(RefCell::new(ValueData {
+            data,
+            grad: 0.0,
+            _prev: vec![],
+            _op: Oper::Leaf,
+        })))
     }
 
-    pub fn backward(&mut self) {
-        if self.grad.is_none() {
-            self.grad = Some(T::from_f64(1.0).unwrap());
-        }
+    pub fn data(&self) -> f64 {
+        self.0.borrow().data
+    }
 
-        let parent_grad = self.grad.unwrap();
-
-        match self.parent {
-            Oper::Add => {
-                for child in self.children.iter_mut() {
-                    let current_grad = child.grad.unwrap_or(T::from_f64(0.0).unwrap());
-                    child.grad = Some(current_grad + parent_grad);
-
-                    child.backward();
-                }
-            }
-            Oper::Sub => unimplemented!(),
-            Oper::Div => unimplemented!(),
-            Oper::Mul => unimplemented!(),
-            Oper::Exp => unimplemented!(),
-            Oper::Pow => unimplemented!(),
-            Oper::Leaf => {}
-        }
+    pub fn grad(&self) -> f64 {
+        self.0.borrow().grad
     }
 }
 
-// Adding two value types
-impl<T> Add for Value<T>
-where
-    T: Add<Output = T> + Copy,
-{
-    type Output = Value<T>;
-    fn add(self, other: Self) -> Self {
-        Value {
-            value: self.value + other.value,
-            parent: Oper::Add,
-            grad: None,
-            children: Vec::from([self.clone(), other.clone()]),
-        }
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Value(data={:.4}, grad={:.4})", self.data(), self.grad())
     }
 }
 
-// Adding value to anything that implements add e.g. int
-impl<T> Add<T> for Value<T>
-where
-    T: Add<Output = T> + Copy + FromPrimitive + ToPrimitive,
-{
-    type Output = Value<T>;
-    fn add(self, other: T) -> Self {
-        return Value {
-            value: self.value + other,
-            parent: Oper::Add,
-            grad: None,
-            children: Vec::from([self, Value::new(other)]),
-        };
+//  &Value + &Value
+impl<'a, 'b> Add<&'b Value> for &'a Value {
+    type Output = Value;
+
+    fn add(self, other: &'b Value) -> Value {
+        Value(Rc::new(RefCell::new(ValueData {
+            data: self.data() + other.data(),
+            grad: 0.0,
+            _prev: vec![self.clone(), other.clone()],
+            _op: Oper::Add,
+        })))
     }
 }
 
-// you can't define a generic operation for a rhs (would
-// require you to to smth like impl Add<Value<*>> or whatever)
-// You can add them if you specify the type explicitly so
-// this is a macro to generate the addidion rhs operation
-// for the common numeric types.
-macro_rules! impl_add_for_numeric_types {
-    ($($t:ty),*) => {
-        $(
-            impl Add<Value<$t>> for $t {
-                type Output = Value<$t>;
-                fn add(self, val: Value<$t>) -> Value<$t> {
-                    Value {
-                        value: self + val.value,
-                        parent: Oper::Add,
-                        grad: None,
-                        children: Vec::from([val, Value::new(self)]),
-                    }
-                }
-            }
-        )*
-    };
+// Value + Value
+impl Add for Value {
+    type Output = Value;
+    fn add(self, other: Value) -> Value {
+        &self + &other
+    }
 }
-impl_add_for_numeric_types! {
-    f32, f64,
-    i8, i16, i32, i64, i128,
-    u8, u16, u32, u64, u128,
-    isize, usize
+
+// &Value + Value
+impl Add<Value> for &Value {
+    type Output = Value;
+    fn add(self, other: Value) -> Value {
+        self + &other
+    }
+}
+
+// Value + &Value
+impl Add<&Value> for Value {
+    type Output = Value;
+    fn add(self, other: &Value) -> Value {
+        &self + other
+    }
+}
+
+// &Value * &Value
+impl<'a, 'b> Mul<&'b Value> for &'a Value {
+    type Output = Value;
+
+    fn mul(self, other: &'b Value) -> Value {
+        Value(Rc::new(RefCell::new(ValueData {
+            data: self.data() * other.data(),
+            grad: 0.0,
+            _prev: vec![self.clone(), other.clone()],
+            _op: Oper::Mul,
+        })))
+    }
+}
+
+// Value * Value
+impl Mul for Value {
+    type Output = Value;
+    fn mul(self, other: Value) -> Value {
+        &self * &other
+    }
+}
+
+// &Value * Value
+impl Mul<Value> for &Value {
+    type Output = Value;
+    fn mul(self, other: Value) -> Value {
+        self * &other
+    }
+}
+
+// Value * &Value
+impl Mul<&Value> for Value {
+    type Output = Value;
+    fn mul(self, other: &Value) -> Value {
+        &self * other
+    }
+}
+
+impl Add<f64> for Value {
+    type Output = Value;
+    fn add(self, other: f64) -> Value {
+        self + Value::new(other)
+    }
+}
+
+impl Add<Value> for f64 {
+    type Output = Value;
+    fn add(self, other: Value) -> Value {
+        Value::new(self) + other
+    }
+}
+
+impl Mul<f64> for Value {
+    type Output = Value;
+    fn mul(self, other: f64) -> Value {
+        self * Value::new(other)
+    }
+}
+
+impl Mul<Value> for f64 {
+    type Output = Value;
+    fn mul(self, other: Value) -> Value {
+        Value::new(self) * other
+    }
 }

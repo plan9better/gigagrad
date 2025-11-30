@@ -1,18 +1,12 @@
 mod value;
-
 use value::Value;
 
 fn main() {
-    let a = Value::new(3.0);
-    let b = Value::new(5.0);
+    let a = Value::new(2.0);
+    let b = Value::new(-3.0);
+    let c = Value::new(10.0);
 
-    println!("{:?}", 3.0 + a.clone());
-    println!("{:?}", b.clone() + a.clone());
-    println!("{:?}", b == a);
-    println!("b: {:?}", b);
-    println!("a: {:?}", a);
-    let c = b + a;
-    println!("c: {:?}", c);
+    let e = &a * &b + &c;
 
-    println!("Hello, world!");
+    let f = &a + &b;
 }
