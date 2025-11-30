@@ -1,14 +1,11 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::f64::consts;
 use std::fmt;
 use std::ops::{Add, Mul};
 use std::rc::Rc;
 
-use num_traits::Float;
-
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Oper {
+pub enum Oper {
     Add,
     Mul,
     Leaf,
@@ -87,8 +84,8 @@ impl Value {
                     // calculating derivatives of
                     // inputs so just ^2
                     let tanh: f64 = data.data.powi(2);
-                    if tanh == 1 {
-                        eprintln!("WARN[gigagrad]: While calculating gradient of {:?} the output value is 1 therefore the gradient will be 0.")
+                    if tanh == 1.0 {
+                        eprintln!("WARN[gigagrad]: While calculating gradient of {:?} the output value is 1 therefore the gradient will be 0.", node)
                     }
                     let d = 1.0 - tanh;
                     let mut child = data._prev[0].0.borrow_mut();
@@ -108,6 +105,10 @@ impl Value {
 
     pub fn grad(&self) -> Option<f64> {
         self.0.borrow().grad
+    }
+
+    pub fn op(&self) -> Oper {
+        self.0.borrow()._op
     }
 
     fn build_topo(&self, visited: &mut HashSet<usize>, topo: &mut Vec<Value>) {
@@ -139,14 +140,15 @@ impl fmt::Debug for Value {
                 f,
                 "Value(data={:.4}, grad=(Not set), Op={:?})",
                 self.data(),
-                self._op
+                self.op()
             )
         } else {
             write!(
                 f,
                 "Value(data={:.4}, grad={:.4}), Op={:?}",
                 self.data(),
-                self.grad().unwrap()
+                self.grad().unwrap(),
+                self.op(),
             )
         }
     }
